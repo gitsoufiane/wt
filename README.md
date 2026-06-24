@@ -150,6 +150,26 @@ Docs:
 - Git worktree behavior:
   <https://git-scm.com/docs/git-worktree>
 
+## Agent and AI use
+
+Agents should prefer deterministic commands. Avoid `--shell`; use the printed
+path instead.
+
+Good agent defaults:
+
+```sh
+WT_SKIP_HOOK=1 wt feature-a
+WT_ROOT=/tmp/worktrees/my-repo WT_SKIP_HOOK=1 wt feature-a
+```
+
+Suggested agent-focused improvements:
+
+1. Add `--json` for machine-readable output, for example
+   `{ "path": "...", "branch": "...", "envCopied": 3 }`.
+2. Add `--cwd <repo>` so agents can run `wt` from any directory.
+3. Add `--no-install` as a flag version of `WT_SKIP_HOOK=1`.
+4. Add `--no-env` for clean test worktrees. Default should still copy `.env`.
+
 ## Suggested improvements
 
 These are not needed for the first team install.
