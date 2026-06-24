@@ -1,24 +1,31 @@
 {
-  "name": "wt-cli",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Small Git worktree helper installable as the wt command.",
-  "repository": {
-    "type": "git",
-    "url": "git+ssh://git@github.com/gitsoufiane/wt.git"
-  },
-  "bin": {
-    "wt": "./bin/wt.js"
-  },
-  "files": [
-    "bin",
-    "README.md"
-  ],
-  "scripts": {
-    "test": "node --test"
-  },
-  "engines": {
-    "node": ">=18"
-  },
-  "license": "UNLICENSED"
+	"name": "wt-cli",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Small Git worktree helper installable as the wt command.",
+	"repository": {
+		"type": "git",
+		"url": "git+ssh://git@github.com/gitsoufiane/wt.git"
+	},
+	"bin": {
+		"wt": "./bin/wt.js"
+	},
+	"files": [
+		"bin",
+		"README.md"
+	],
+	"scripts": {
+		"format": "prettier --write \"**/*.{js,json,md}\"",
+		"format:check": "prettier --check \"**/*.{js,json,md}\"",
+		"lint": "eslint .",
+		"test": "node --test"
+	},
+	"engines": {
+		"node": ">=18"
+	},
+	"license": "UNLICENSED",
+	"devDependencies": {
+		"eslint": "^8.57.1",
+		"prettier": "^3.8.4"
+	}
 }

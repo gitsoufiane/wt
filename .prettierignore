@@ -1,0 +1,5 @@
+.pi/
+coverage/
+node_modules/
+*.tgz
+package-lock.json

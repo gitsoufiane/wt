@@ -46,17 +46,17 @@ npm link
 
 ## Commands
 
-| Command | What it does |
-| --- | --- |
-| `wt <name>` | Create a worktree and print its path |
-| `wt --shell <name>` | Create a worktree and open a subshell inside it |
-| `wt -s` | Pick an existing worktree with `fzf` and print its path |
-| `wt --shell -s` | Pick an existing worktree and open a subshell inside it |
-| `wt -l` | List worktrees |
-| `wt -p` | Prune stale worktree metadata |
-| `wt -d` | Delete the current worktree and keep its branch |
-| `wt -D` | Delete the current worktree and delete its branch |
-| `wt sync-env` | Copy untracked `.env` files from the main repo |
+| Command             | Does                                      |
+| ------------------- | ----------------------------------------- |
+| `wt <name>`         | Create a worktree and print its path      |
+| `wt --shell <name>` | Create and open a subshell inside it      |
+| `wt -s`             | Pick a worktree with `fzf` and print path |
+| `wt --shell -s`     | Pick a worktree and open a subshell       |
+| `wt -l`             | List worktrees                            |
+| `wt -p`             | Prune stale worktree metadata             |
+| `wt -d`             | Delete current worktree, keep branch      |
+| `wt -D`             | Delete current worktree and branch        |
+| `wt sync-env`       | Copy untracked `.env` files               |
 
 ## Daily use
 
@@ -187,10 +187,24 @@ These are not needed for the first team install.
 
 ## Development
 
-Run tests:
+Install dev tools:
 
 ```sh
+npm install
+```
+
+Run checks:
+
+```sh
+npm run format:check
+npm run lint
 npm test
+```
+
+Format files:
+
+```sh
+npm run format
 ```
 
 Preview the install package:

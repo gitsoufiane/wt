@@ -1,0 +1,13 @@
+{
+	"root": true,
+	"env": {
+		"commonjs": true,
+		"es2022": true,
+		"node": true
+	},
+	"extends": "eslint:recommended",
+	"ignorePatterns": [".pi/", "coverage/", "node_modules/"],
+	"parserOptions": {
+		"ecmaVersion": 2022
+	}
+}
