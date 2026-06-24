@@ -1,0 +1,24 @@
+{
+  "name": "wt-cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Small Git worktree helper installable as the wt command.",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/gitsoufiane/wt.git"
+  },
+  "bin": {
+    "wt": "./bin/wt.js"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED"
+}
