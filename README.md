@@ -177,8 +177,8 @@ These are not needed for the first team install.
 1. Add release tags, then install with
    `npm install -g git+ssh://git@github.com/gitsoufiane/wt.git#v0.1.0`.
    This gives the team a stable version instead of the latest `main` commit.
-2. Add `--base`, `--root`, and `--no-install` flags. Today these exist as
-   Git config or environment values only.
+2. Add `--base` and `--root` flags. Today these exist as Git config or
+   environment values only.
 3. Parse `git worktree list --porcelain -z`. Git documents `-z` as safer for
    unusual paths.
 4. Add `wt repair` for moved worktrees. Git has `git worktree repair` for this.

@@ -56,12 +56,8 @@ test("creates a worktree from a local repo and copies env files", () => {
 			fs.readFileSync(path.join(wtPath, ".env"), "utf8"),
 			"SECRET=1\n",
 		);
-		assert.match(result.stdout, new RegExp(escapeRegExp(wtPath)));
+		assert.ok(result.stdout.includes(wtPath));
 	} finally {
 		fs.rmSync(tmp, { recursive: true, force: true });
 	}
 });
-
-function escapeRegExp(value) {
-	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}

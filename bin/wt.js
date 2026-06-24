@@ -376,9 +376,7 @@ function run(cmd, cmdArgs = [], options = {}) {
 	const result = spawnSync(cmd, cmdArgs, {
 		cwd: options.cwd || process.cwd(),
 		encoding: "utf8",
-		input: options.input,
 		stdio: options.stdio || "pipe",
-		env: process.env,
 	});
 
 	if (result.error) throw new Error(`${cmd}: ${result.error.message}`);
@@ -395,7 +393,6 @@ function runShell(command, cwd) {
 		cwd,
 		shell: true,
 		stdio: "inherit",
-		env: process.env,
 	});
 	if (result.error) throw new Error(`${command}: ${result.error.message}`);
 	if (result.status !== 0)
@@ -420,7 +417,6 @@ function finishTarget(target, openShell) {
 	const result = spawnSync(shell, {
 		cwd: target,
 		stdio: "inherit",
-		env: process.env,
 	});
 	if (result.error) throw new Error(`${shell}: ${result.error.message}`);
 	process.exitCode = result.status || 0;
