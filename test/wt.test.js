@@ -61,3 +61,47 @@ test("creates a worktree from a local repo and copies env files", () => {
 		fs.rmSync(tmp, { recursive: true, force: true });
 	}
 });
+
+test("--json and --no-env produce machine-readable output", () => {
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "wt-cli-"));
+	try {
+		const repo = makeRepo(tmp);
+		const wtRoot = path.join(tmp, "worktrees");
+		fs.writeFileSync(path.join(repo, ".env"), "SECRET=1\n");
+
+		const result = run(
+			"node",
+			[bin, "--json", "--no-env", "--no-install", "--cwd", repo, "feature-b"],
+			{ env: { ...process.env, WT_ROOT: wtRoot } },
+		);
+
+		assert.equal(result.status, 0, result.stderr || result.stdout);
+		const parsed = JSON.parse(result.stdout);
+		assert.equal(parsed.path, path.join(wtRoot, "feature-b"));
+		assert.equal(parsed.branch, "feature-b");
+		assert.equal(parsed.envCopied, 0);
+		assert.ok(!fs.existsSync(path.join(parsed.path, ".env")));
+	} finally {
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
+});
+
+test("-D deletes the current worktree and its branch", () => {
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "wt-cli-"));
+	try {
+		const repo = makeRepo(tmp);
+		const wtRoot = path.join(tmp, "worktrees");
+		const env = { ...process.env, WT_ROOT: wtRoot, WT_SKIP_HOOK: "1" };
+
+		run("node", [bin, "feature-c"], { cwd: repo, env });
+		const wtPath = path.join(wtRoot, "feature-c");
+
+		const result = run("node", [bin, "-D"], { cwd: wtPath, env });
+		assert.equal(result.status, 0, result.stderr || result.stdout);
+		assert.ok(!fs.existsSync(wtPath));
+		const branches = git(["branch", "--list", "feature-c"], repo);
+		assert.equal(branches, "");
+	} finally {
+		fs.rmSync(tmp, { recursive: true, force: true });
+	}
+});

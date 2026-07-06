@@ -6,17 +6,29 @@ const os = require("node:os");
 const path = require("node:path");
 
 const rawArgs = process.argv.slice(2);
-const shellMode = rawArgs.includes("--shell");
-const args = rawArgs.filter((arg) => arg !== "--shell");
+const flags = { shell: false, json: false, install: true, env: true };
+const args = [];
 
 try {
-	main(args, shellMode);
+	for (let i = 0; i < rawArgs.length; i++) {
+		const arg = rawArgs[i];
+		if (arg === "--shell") flags.shell = true;
+		else if (arg === "--json") flags.json = true;
+		else if (arg === "--no-install") flags.install = false;
+		else if (arg === "--no-env") flags.env = false;
+		else if (arg === "--cwd") {
+			const dir = rawArgs[++i];
+			if (!dir) throw new Error("--cwd requires a directory");
+			process.chdir(dir);
+		} else args.push(arg);
+	}
+	main(args);
 } catch (error) {
 	console.error(`wt: ${error.message}`);
 	process.exit(1);
 }
 
-function main(argv, openShell) {
+function main(argv) {
 	const cmd = argv[0] || "";
 
 	if (cmd === "" || cmd === "-h" || cmd === "--help") {
@@ -24,9 +36,14 @@ function main(argv, openShell) {
 		return;
 	}
 
+	if (cmd === "-v" || cmd === "--version") {
+		console.log(require("../package.json").version);
+		return;
+	}
+
 	if (cmd === "-l" || cmd === "--list") return listWorktrees();
 	if (cmd === "-p" || cmd === "--prune") return pruneWorktrees();
-	if (cmd === "-s" || cmd === "--switch") return switchWorktree(openShell);
+	if (cmd === "-s" || cmd === "--switch") return switchWorktree();
 	if (cmd === "-d" || cmd === "--delete") return deleteWorktree(false);
 	if (cmd === "-D") return deleteWorktree(true);
 	if (cmd === "sync-env") return syncEnv();
@@ -38,23 +55,28 @@ function main(argv, openShell) {
 
 	if (argv.length !== 1)
 		throw new Error(`create takes exactly one name, got ${argv.length}`);
-	createWorktree(cmd, openShell);
+	createWorktree(cmd);
 }
 
 function usage() {
-	console.log(`usage: wt [--shell] <name> | wt -s | wt -l | wt -p | wt -d | wt -D | wt sync-env
+	console.log(`usage: wt [options] <name> | wt -s | wt -l | wt -p | wt -d | wt -D | wt sync-env
 
-  <name>    create worktree from the configured base ref
-  --shell   open a subshell in the target after create or switch
-  -s        switch: fzf-pick an existing worktree and print its path
-  -l        list worktrees
-  -p        prune stale worktree metadata
-  -d        delete current worktree, keep branch
-  -D        delete current worktree and its branch
-  sync-env  copy untracked .env files from main repo to current worktree`);
+  <name>        create worktree from the configured base ref
+  --shell       open a subshell in the target after create or switch
+  --json        print machine-readable JSON instead of text output
+  --cwd <dir>   run as if started in <dir>
+  --no-install  skip the setup hook / package install
+  --no-env      skip copying .env files
+  -s            switch: fzf-pick an existing worktree and print its path
+  -l            list worktrees
+  -p            prune stale worktree metadata
+  -d            delete current worktree, keep branch
+  -D            delete current worktree and its branch
+  sync-env      copy untracked .env files from main repo to current worktree
+  -v            print version`);
 }
 
-function createWorktree(name, openShell) {
+function createWorktree(name) {
 	const repo = repoRoot();
 	validateBranchName(name, repo);
 
@@ -84,14 +106,15 @@ function createWorktree(name, openShell) {
 			`git worktree add exited ${add.status}, but ${wtPath} exists; continuing`,
 		);
 
-	if (copyEnvEnabled(repo)) {
-		const count = copyEnvFiles(repo, wtPath);
-		log(`copied ${count} env file(s) -> ${wtPath}`);
+	let envCopied = 0;
+	if (flags.env && copyEnvEnabled(repo)) {
+		envCopied = copyEnvFiles(repo, wtPath);
+		log(`copied ${envCopied} env file(s) -> ${wtPath}`);
 	}
 
 	runSetup(repo, wtPath);
 	log(`created ${wtPath}`);
-	finishTarget(wtPath, openShell);
+	finishTarget(wtPath, { branch: name, envCopied });
 }
 
 function listWorktrees() {
@@ -112,7 +135,7 @@ function pruneWorktrees() {
 	log("done");
 }
 
-function switchWorktree(openShell) {
+function switchWorktree() {
 	const repo = repoRoot();
 	const entries = parseWorktrees(
 		git(["worktree", "list", "--porcelain"], repo),
@@ -136,7 +159,7 @@ function switchWorktree(openShell) {
 		throw new Error("fzf is not installed; copy one of the paths above");
 	}
 
-	finishTarget(target, openShell);
+	finishTarget(target, {});
 }
 
 function deleteWorktree(deleteBranch) {
@@ -152,21 +175,29 @@ function deleteWorktree(deleteBranch) {
 		);
 
 	const branch = git(["rev-parse", "--abbrev-ref", "HEAD"], current);
-	run("git", ["-C", main, "worktree", "remove", current], { stdio: "inherit" });
+	// cwd must be main: process.cwd() is deleted by the remove below
+	run("git", ["-C", main, "worktree", "remove", current], {
+		cwd: main,
+		stdio: "inherit",
+	});
 	log(`removed ${current}`);
 
-	if (!deleteBranch) {
+	if (deleteBranch) {
+		if (branch === "HEAD") {
+			warn("detached HEAD; no branch to delete");
+		} else {
+			run("git", ["-C", main, "branch", "-D", branch], {
+				cwd: main,
+				stdio: "inherit",
+			});
+			log(`deleted branch '${branch}'`);
+		}
+	} else {
 		log(`branch '${branch}' kept`);
-		return;
 	}
 
-	if (branch === "HEAD") {
-		warn("detached HEAD; no branch to delete");
-		return;
-	}
-
-	run("git", ["-C", main, "branch", "-D", branch], { stdio: "inherit" });
-	log(`deleted branch '${branch}'`);
+	if (flags.json) console.log(JSON.stringify({ path: main, branch }));
+	else console.log(`cd ${shellQuote(main)}`);
 }
 
 function syncEnv() {
@@ -208,8 +239,8 @@ function resolveBaseRef(repo) {
 }
 
 function runSetup(repo, wtPath) {
-	if (process.env.WT_SKIP_HOOK === "1") {
-		log("setup skipped by WT_SKIP_HOOK=1");
+	if (!flags.install || process.env.WT_SKIP_HOOK === "1") {
+		log("setup skipped");
 		return;
 	}
 
@@ -404,8 +435,13 @@ function commandExists(command) {
 	return !result.error && result.status === 0;
 }
 
-function finishTarget(target, openShell) {
-	if (!openShell) {
+function finishTarget(target, extra) {
+	if (flags.json) {
+		console.log(JSON.stringify({ path: target, ...extra }));
+		return;
+	}
+
+	if (!flags.shell) {
 		console.log(target);
 		console.log(`cd ${shellQuote(target)}`);
 		return;
@@ -453,7 +489,7 @@ function outputTail(result) {
 }
 
 function log(message) {
-	console.log(`wt: ${message}`);
+	console.error(`wt: ${message}`);
 }
 
 function warn(message) {

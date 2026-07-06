@@ -57,6 +57,19 @@ npm link
 | `wt -d`             | Delete current worktree, keep branch      |
 | `wt -D`             | Delete current worktree and branch        |
 | `wt sync-env`       | Copy untracked `.env` files               |
+| `wt -v`             | Print version                             |
+
+Extra flags, useful for scripts and agents:
+
+| Flag           | Does                                        |
+| -------------- | ------------------------------------------- |
+| `--json`       | Print JSON instead of text on create/delete |
+| `--cwd <dir>`  | Run as if started in `<dir>`                |
+| `--no-install` | Skip the setup hook / package install       |
+| `--no-env`     | Skip copying `.env` files                   |
+
+Status messages (`wt: ...`) go to stderr. stdout carries only the result:
+the path and `cd` line, or the JSON object with `--json`.
 
 ## Daily use
 
@@ -158,17 +171,12 @@ path instead.
 Good agent defaults:
 
 ```sh
-WT_SKIP_HOOK=1 wt feature-a
-WT_ROOT=/tmp/worktrees/my-repo WT_SKIP_HOOK=1 wt feature-a
+wt --json --no-install feature-a
+wt --json --no-install --no-env --cwd /path/to/repo feature-a
 ```
 
-Suggested agent-focused improvements:
-
-1. Add `--json` for machine-readable output, for example
-   `{ "path": "...", "branch": "...", "envCopied": 3 }`.
-2. Add `--cwd <repo>` so agents can run `wt` from any directory.
-3. Add `--no-install` as a flag version of `WT_SKIP_HOOK=1`.
-4. Add `--no-env` for clean test worktrees. Default should still copy `.env`.
+`--json` prints one object on stdout, for example
+`{ "path": "...", "branch": "feature-a", "envCopied": 3 }`.
 
 ## Suggested improvements
 
@@ -179,10 +187,8 @@ These are not needed for the first team install.
    This gives the team a stable version instead of the latest `main` commit.
 2. Add `--base` and `--root` flags. Today these exist as Git config or
    environment values only.
-3. Parse `git worktree list --porcelain -z`. Git documents `-z` as safer for
-   unusual paths.
-4. Add `wt repair` for moved worktrees. Git has `git worktree repair` for this.
-5. Publish to a private npm registry if you want normal semantic versions and
+3. Add `wt repair` for moved worktrees. Git has `git worktree repair` for this.
+4. Publish to a private npm registry if you want normal semantic versions and
    easier updates than Git URL installs.
 
 ## Development
