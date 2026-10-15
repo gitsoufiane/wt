@@ -6,8 +6,16 @@ const os = require("node:os");
 const path = require("node:path");
 
 const rawArgs = process.argv.slice(2);
-const flags = { shell: false, json: false, install: true, env: true };
+const flags = {
+	shell: false,
+	json: false,
+	install: true,
+	env: true,
+	force: false,
+};
 const args = [];
+// Child output goes to stderr so stdout carries only wt's result (path or JSON).
+const CHILD_STDIO = ["inherit", 2, "inherit"];
 
 try {
 	for (let i = 0; i < rawArgs.length; i++) {
@@ -16,6 +24,7 @@ try {
 		else if (arg === "--json") flags.json = true;
 		else if (arg === "--no-install") flags.install = false;
 		else if (arg === "--no-env") flags.env = false;
+		else if (arg === "--force") flags.force = true;
 		else if (arg === "--cwd") {
 			const dir = rawArgs[++i];
 			if (!dir) throw new Error("--cwd requires a directory");
@@ -44,9 +53,18 @@ function main(argv) {
 	if (cmd === "-l" || cmd === "--list") return listWorktrees();
 	if (cmd === "-p" || cmd === "--prune") return pruneWorktrees();
 	if (cmd === "-s" || cmd === "--switch") return switchWorktree();
-	if (cmd === "-d" || cmd === "--delete") return deleteWorktree(false);
-	if (cmd === "-D") return deleteWorktree(true);
 	if (cmd === "sync-env") return syncEnv();
+
+	const deleteFlags = { "-d": false, "--delete": false, "-D": true };
+	if (Object.hasOwn(deleteFlags, cmd)) {
+		if (argv.length > 2)
+			throw new Error(
+				`'${cmd}' takes at most one name, got ${argv.length - 1}`,
+			);
+		return deleteWorktree(deleteFlags[cmd], argv[1]);
+	}
+	if (argv.length === 2 && Object.hasOwn(deleteFlags, argv[1]))
+		return deleteWorktree(deleteFlags[argv[1]], cmd);
 
 	if (cmd.startsWith("-")) {
 		usage();
@@ -59,19 +77,22 @@ function main(argv) {
 }
 
 function usage() {
-	console.log(`usage: wt [options] <name> | wt -s | wt -l | wt -p | wt -d | wt -D | wt sync-env
+	console.log(`usage: wt [options] <name> | wt [-d|-D] [<name>] | wt -s | wt -l | wt -p | wt sync-env
 
-  <name>        create worktree from the configured base ref
+  <name>        create worktree; tracks <remote>/<name> if it exists,
+                else branches from the configured base ref
   --shell       open a subshell in the target after create or switch
   --json        print machine-readable JSON instead of text output
   --cwd <dir>   run as if started in <dir>
   --no-install  skip the setup hook / package install
   --no-env      skip copying .env files
+  --force       discard uncommitted changes when deleting a worktree
   -s            switch: fzf-pick an existing worktree and print its path
   -l            list worktrees
   -p            prune stale worktree metadata
-  -d            delete current worktree, keep branch
-  -D            delete current worktree and its branch
+  -d [<name>]   delete current (or named) worktree, keep branch
+  -D [<name>]   delete current (or named) worktree and its branch
+  <name> -D     same as -D <name>; also deletes a branch with no worktree
   sync-env      copy untracked .env files from main repo to current worktree
   -v            print version`);
 }
@@ -81,7 +102,13 @@ function createWorktree(name) {
 	validateBranchName(name, repo);
 
 	if (gitOk(["show-ref", "--verify", "--quiet", `refs/heads/${name}`], repo)) {
-		throw new Error(`branch '${name}' already exists`);
+		const existing = findWorktree(repo, name);
+		const location = existing ? ` at ${existing.worktree}` : "";
+		const removal =
+			!existing || !samePath(existing.worktree, mainRepoRoot(repo))
+				? `\nremove it with: wt ${shellQuote(name)} -D`
+				: "";
+		throw new Error(`branch '${name}' already exists${location}${removal}`);
 	}
 
 	const root = worktreeRoot(repo);
@@ -90,12 +117,23 @@ function createWorktree(name) {
 
 	if (fs.existsSync(wtPath)) throw new Error(`${wtPath} already exists`);
 
-	const baseRef = resolveBaseRef(repo);
+	const base = resolveBaseRef(repo, name);
 	fs.mkdirSync(path.dirname(wtPath), { recursive: true });
 
+	log(`creating '${name}' from ${base.ref}`);
 	const add = run(
 		"git",
-		["-C", repo, "worktree", "add", "--no-track", "-b", name, wtPath, baseRef],
+		[
+			"-C",
+			repo,
+			"worktree",
+			"add",
+			base.track ? "--track" : "--no-track",
+			"-b",
+			name,
+			wtPath,
+			base.ref,
+		],
 		{ check: false },
 	);
 	if (!fs.existsSync(path.join(wtPath, ".git"))) {
@@ -114,7 +152,7 @@ function createWorktree(name) {
 
 	runSetup(repo, wtPath);
 	log(`created ${wtPath}`);
-	finishTarget(wtPath, { branch: name, envCopied });
+	finishTarget(wtPath, { branch: name, base: base.ref, envCopied });
 }
 
 function listWorktrees() {
@@ -162,23 +200,39 @@ function switchWorktree() {
 	finishTarget(target, {});
 }
 
-function deleteWorktree(deleteBranch) {
-	const current = repoRoot();
-	const main = mainRepoRoot(current);
+function deleteWorktree(deleteBranch, name) {
+	const source = repoRoot();
+	const main = mainRepoRoot(source);
+	if (name) validateBranchName(name, source);
+	const existing = name && findWorktree(source, name);
+	const current = existing ? existing.worktree : source;
 
+	if (name && !existing) {
+		if (!deleteBranch)
+			throw new Error(`no worktree has branch '${name}' checked out`);
+		if (!gitOk(["show-ref", "--verify", "--quiet", `refs/heads/${name}`], main))
+			throw new Error(`branch '${name}' does not exist`);
+		run("git", ["-C", main, "branch", "-D", name], { stdio: CHILD_STDIO });
+		log(`deleted branch '${name}'`);
+		if (flags.json) console.log(JSON.stringify({ path: main, branch: name }));
+		else console.log(`cd ${shellQuote(main)}`);
+		return;
+	}
 	if (isMainWorktree(current)) throw new Error("not inside a linked worktree");
 
 	const dirty = git(["status", "--porcelain"], current);
-	if (dirty)
+	if (dirty && !flags.force)
 		throw new Error(
-			`working tree is dirty; commit, stash, or discard changes first\n${dirty}`,
+			`working tree is dirty; commit, stash, or discard changes first, or re-run with --force\n${dirty}`,
 		);
 
 	const branch = git(["rev-parse", "--abbrev-ref", "HEAD"], current);
 	// cwd must be main: process.cwd() is deleted by the remove below
-	run("git", ["-C", main, "worktree", "remove", current], {
+	const removeArgs = ["-C", main, "worktree", "remove"];
+	if (flags.force) removeArgs.push("--force");
+	run("git", [...removeArgs, current], {
 		cwd: main,
-		stdio: "inherit",
+		stdio: CHILD_STDIO,
 	});
 	log(`removed ${current}`);
 
@@ -188,7 +242,7 @@ function deleteWorktree(deleteBranch) {
 		} else {
 			run("git", ["-C", main, "branch", "-D", branch], {
 				cwd: main,
-				stdio: "inherit",
+				stdio: CHILD_STDIO,
 			});
 			log(`deleted branch '${branch}'`);
 		}
@@ -209,33 +263,45 @@ function syncEnv() {
 	log(`synced ${count} env file(s) into ${current}`);
 }
 
-function resolveBaseRef(repo) {
+function resolveBaseRef(repo, name) {
 	const configured = config(repo, "wt.base", "WT_BASE", "");
 	const remote = config(repo, "wt.remote", "WT_REMOTE", "origin");
 	const hasRemote = gitOk(["remote", "get-url", remote], repo);
+	const remoteRefExists = (branch) =>
+		gitOk(
+			["show-ref", "--verify", "--quiet", `refs/remotes/${remote}/${branch}`],
+			repo,
+		);
 
 	if (hasRemote) {
 		log(`fetching latest ${remote}`);
-		run("git", ["-C", repo, "fetch", remote, "--prune"], { stdio: "inherit" });
+		const fetch = run("git", ["-C", repo, "fetch", remote, "--prune"], {
+			stdio: CHILD_STDIO,
+			check: false,
+		});
+		if (fetch.status !== 0)
+			warn(`fetch from ${remote} failed; using local refs, which may be stale`);
 	}
 
-	if (configured) return configured;
-	if (!hasRemote) return "HEAD";
+	// Same-named remote branch: check it out instead of creating a diverging one.
+	if (hasRemote && remoteRefExists(name))
+		return { ref: `${remote}/${name}`, track: true };
+	if (configured) return { ref: configured, track: false };
+	if (!hasRemote) return { ref: "HEAD", track: false };
 
 	const remoteHead = gitMaybe(
 		["symbolic-ref", "--quiet", "--short", `refs/remotes/${remote}/HEAD`],
 		repo,
 	);
 	if (remoteHead.ok && remoteHead.stdout.trim())
-		return remoteHead.stdout.trim();
+		return { ref: remoteHead.stdout.trim(), track: false };
 
 	for (const branch of ["this", "main", "master"]) {
-		const ref = `refs/remotes/${remote}/${branch}`;
-		if (gitOk(["show-ref", "--verify", "--quiet", ref], repo))
-			return `${remote}/${branch}`;
+		if (remoteRefExists(branch))
+			return { ref: `${remote}/${branch}`, track: false };
 	}
 
-	return "HEAD";
+	return { ref: "HEAD", track: false };
 }
 
 function runSetup(repo, wtPath) {
@@ -253,26 +319,25 @@ function runSetup(repo, wtPath) {
 
 	const install = detectInstall(wtPath);
 	if (!install) {
-		log("no hook or lockfile; skipping setup");
+		log("no hook or installable manifest; skipping setup");
 		return;
 	}
 
-	log(`running ${[install.cmd, ...install.args].join(" ")}`);
-	run(install.cmd, install.args, { cwd: wtPath, stdio: "inherit" });
+	log(`running ${install}`);
+	// Via the shell so Windows can run npm.cmd etc. (Node blocks direct .cmd spawns).
+	runShell(install, wtPath);
 }
 
 function detectInstall(dir) {
-	if (fs.existsSync(path.join(dir, "pnpm-lock.yaml")))
-		return { cmd: "pnpm", args: ["install"] };
-	if (fs.existsSync(path.join(dir, "yarn.lock")))
-		return { cmd: "yarn", args: ["install"] };
-	if (fs.existsSync(path.join(dir, "package-lock.json")))
-		return { cmd: "npm", args: ["install"] };
+	if (!fs.existsSync(path.join(dir, "package.json"))) return null;
+	if (fs.existsSync(path.join(dir, "pnpm-lock.yaml"))) return "pnpm install";
+	if (fs.existsSync(path.join(dir, "yarn.lock"))) return "yarn install";
+	if (fs.existsSync(path.join(dir, "package-lock.json"))) return "npm install";
 	if (
 		fs.existsSync(path.join(dir, "bun.lock")) ||
 		fs.existsSync(path.join(dir, "bun.lockb"))
 	)
-		return { cmd: "bun", args: ["install"] };
+		return "bun install";
 	return null;
 }
 
@@ -342,7 +407,8 @@ function absoluteGitDir(cwd) {
 function worktreeRoot(repo) {
 	const configured = config(repo, "wt.root", "WT_ROOT", "");
 	const value =
-		configured || path.join(os.homedir(), ".worktrees", path.basename(repo));
+		configured ||
+		path.join(os.homedir(), ".worktrees", path.basename(mainRepoRoot(repo)));
 	return path.resolve(repo, expandHome(value));
 }
 
@@ -361,6 +427,12 @@ function validateBranchName(name, repo) {
 		{ check: false },
 	);
 	if (result.status !== 0) throw new Error(`invalid branch name '${name}'`);
+}
+
+function findWorktree(repo, branch) {
+	return parseWorktrees(git(["worktree", "list", "--porcelain"], repo)).find(
+		(entry) => entry.branch === branch,
+	);
 }
 
 function parseWorktrees(output) {
@@ -423,7 +495,7 @@ function runShell(command, cwd) {
 	const result = spawnSync(command, {
 		cwd,
 		shell: true,
-		stdio: "inherit",
+		stdio: CHILD_STDIO,
 	});
 	if (result.error) throw new Error(`${command}: ${result.error.message}`);
 	if (result.status !== 0)

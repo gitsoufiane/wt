@@ -46,18 +46,19 @@ npm link
 
 ## Commands
 
-| Command             | Does                                      |
-| ------------------- | ----------------------------------------- |
-| `wt <name>`         | Create a worktree and print its path      |
-| `wt --shell <name>` | Create and open a subshell inside it      |
-| `wt -s`             | Pick a worktree with `fzf` and print path |
-| `wt --shell -s`     | Pick a worktree and open a subshell       |
-| `wt -l`             | List worktrees                            |
-| `wt -p`             | Prune stale worktree metadata             |
-| `wt -d`             | Delete current worktree, keep branch      |
-| `wt -D`             | Delete current worktree and branch        |
-| `wt sync-env`       | Copy untracked `.env` files               |
-| `wt -v`             | Print version                             |
+| Command             | Does                                       |
+| ------------------- | ------------------------------------------ |
+| `wt <name>`         | Create a worktree and print its path       |
+| `wt --shell <name>` | Create and open a subshell inside it       |
+| `wt -s`             | Pick a worktree with `fzf` and print path  |
+| `wt --shell -s`     | Pick a worktree and open a subshell        |
+| `wt -l`             | List worktrees                             |
+| `wt -p`             | Prune stale worktree metadata              |
+| `wt -d [<name>]`    | Delete current/named worktree, keep branch |
+| `wt -D [<name>]`    | Delete current/named worktree and branch   |
+| `wt <name> -D`      | Delete named worktree (if any) and branch  |
+| `wt sync-env`       | Copy untracked `.env` files                |
+| `wt -v`             | Print version                              |
 
 Extra flags, useful for scripts and agents:
 
@@ -67,6 +68,7 @@ Extra flags, useful for scripts and agents:
 | `--cwd <dir>`  | Run as if started in `<dir>`                |
 | `--no-install` | Skip the setup hook / package install       |
 | `--no-env`     | Skip copying `.env` files                   |
+| `--force`      | Discard uncommitted changes when deleting   |
 
 Status messages (`wt: ...`) go to stderr. stdout carries only the result:
 the path and `cd` line, or the JSON object with `--json`.
@@ -115,8 +117,12 @@ wtc feature-a
 
 ## Defaults
 
-- Worktrees go in `~/.worktrees/<repo-name>/<branch>`.
-- Base ref order:
+- Worktrees go in `~/.worktrees/<repo-name>/<branch>`, also when you run `wt`
+  from a linked worktree.
+- If `<remote>/<name>` exists, `wt <name>` checks it out and tracks it, so you
+  can open a teammate's branch. Otherwise the new branch has no upstream.
+- If the fetch fails (for example, offline), `wt` warns and uses local refs.
+- Base ref order for new branches:
   1. `wt.base`
   2. `WT_BASE`
   3. remote default branch
@@ -176,7 +182,7 @@ wt --json --no-install --no-env --cwd /path/to/repo feature-a
 ```
 
 `--json` prints one object on stdout, for example
-`{ "path": "...", "branch": "feature-a", "envCopied": 3 }`.
+`{ "path": "...", "branch": "feature-a", "base": "origin/main", "envCopied": 3 }`.
 
 ## Suggested improvements
 
