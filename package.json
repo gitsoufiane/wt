@@ -1,19 +1,27 @@
 {
-	"name": "wt-cli",
-	"version": "0.2.0",
-	"private": true,
+	"name": "@gitsoufiane/wt",
+	"version": "0.3.0",
 	"description": "Small Git worktree helper installable as the wt command.",
+	"keywords": [
+		"git",
+		"worktree",
+		"pi-package"
+	],
 	"repository": {
 		"type": "git",
-		"url": "git+ssh://git@github.com/gitsoufiane/wt.git"
+		"url": "git+https://github.com/gitsoufiane/wt.git"
 	},
+	"license": "MIT",
 	"bin": {
-		"wt": "./bin/wt.js"
+		"wt": "bin/wt.js"
 	},
 	"files": [
 		"bin",
-		"README.md"
+		"skills"
 	],
+	"publishConfig": {
+		"access": "public"
+	},
 	"scripts": {
 		"format": "prettier --write \"**/*.{js,json,md}\"",
 		"format:check": "prettier --check \"**/*.{js,json,md}\"",
@@ -23,7 +31,6 @@
 	"engines": {
 		"node": ">=18"
 	},
-	"license": "UNLICENSED",
 	"devDependencies": {
 		"eslint": "^8.57.1",
 		"prettier": "^3.8.4"

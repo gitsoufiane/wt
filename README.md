@@ -1,48 +1,58 @@
-# wt-cli
+<p align="center">
+  <img src="https://raw.githubusercontent.com/gitsoufiane/wt/main/assets/icon.svg" alt="wt icon" width="112" height="112">
+</p>
 
-Installable `wt` command for Git worktrees.
+<h1 align="center">wt</h1>
 
-## Why this exists
+<p align="center">
+  Git worktrees in one command: create, switch, and clean up,<br>
+  with your <code>.env</code> files and dependencies ready.
+</p>
 
-`wt` keeps the old shell helper behavior in a team-installable CLI:
+<p align="center">
+  <a href="https://www.npmjs.com/package/@gitsoufiane/wt"><img alt="npm" src="https://img.shields.io/npm/v/@gitsoufiane/wt?color=f97316"></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-22c55e"></a>
+  <img alt="Node 18+" src="https://img.shields.io/badge/node-%3E%3D18-38bdf8">
+</p>
 
-- create a Git worktree from a safe base ref
-- copy local untracked `.env` files into the new worktree
-- run the repo setup command
-- list, switch, prune, and delete worktrees
+```sh
+npm install -g @gitsoufiane/wt
+wt feature-a        # new worktree at ~/.worktrees/<repo>/feature-a
+```
 
-## Requirements
+## Why wt
 
-- Node.js 18 or newer
-- Git
-- SSH access to `git@github.com:gitsoufiane/wt.git`
-- `fzf` only for `wt -s`
+Plain Git needs several steps for each new worktree:
+
+```sh
+git fetch origin
+git worktree add -b feature-a ../feature-a origin/main
+cp .env ../feature-a/ && cd ../feature-a && npm install
+```
+
+`wt feature-a` does all of that:
+
+- **Safe base.** Fetches the remote, then branches from the remote default
+  branch. If `origin/feature-a` exists, it checks it out and tracks it.
+- **Ready to run.** Copies untracked `.env` and `.env.*` files and runs the
+  install for your lockfile (`npm`, `pnpm`, `yarn`, or `bun`), or your own hook.
+- **Easy cleanup.** `wt -D feature-a` removes the worktree and the branch.
+- **Script and agent friendly.** `--json` prints one JSON object on stdout.
 
 ## Install
 
-Install from GitHub:
+Requirements: Node.js 18+, Git, and `fzf` only for `wt -s`.
 
-```sh
-npm install -g git+ssh://git@github.com/gitsoufiane/wt.git
-```
+| Task      | Command                                 |
+| --------- | --------------------------------------- |
+| Install   | `npm install -g @gitsoufiane/wt`        |
+| Update    | `npm install -g @gitsoufiane/wt@latest` |
+| Uninstall | `npm uninstall -g @gitsoufiane/wt`      |
 
-Update by reinstalling:
-
-```sh
-npm install -g git+ssh://git@github.com/gitsoufiane/wt.git
-```
-
-Uninstall:
-
-```sh
-npm uninstall -g wt-cli
-```
-
-During local development in this repo:
-
-```sh
-npm link
-```
+> [!WARNING]
+> The npm name `wt-cli` belongs to a different package. If you installed an
+> older version of this tool as `wt-cli`, run `npm uninstall -g wt-cli` first,
+> and never install `wt-cli` from the registry.
 
 ## Commands
 
@@ -60,7 +70,7 @@ npm link
 | `wt sync-env`       | Copy untracked `.env` files                |
 | `wt -v`             | Print version                              |
 
-Extra flags, useful for scripts and agents:
+Flags:
 
 | Flag           | Does                                        |
 | -------------- | ------------------------------------------- |
@@ -75,28 +85,17 @@ the path and `cd` line, or the JSON object with `--json`.
 
 ## Daily use
 
-Create a worktree:
-
-```sh
-wt feature-a
-```
-
-The command prints the new path and a `cd ...` command:
-
-```txt
+```console
+$ wt feature-a
 wt: created /Users/me/.worktrees/my-repo/feature-a
 /Users/me/.worktrees/my-repo/feature-a
 cd '/Users/me/.worktrees/my-repo/feature-a'
 ```
 
-A binary cannot change the directory of the parent shell. Use `--shell` if you
-want `wt` to open a shell inside the new worktree:
+A program cannot change the directory of the shell that started it. Pick one:
 
-```sh
-wt --shell feature-a
-```
-
-If you prefer a shell helper, add this to your shell profile:
+- `wt --shell feature-a` opens a new shell inside the worktree.
+- Add this helper to your shell profile, then run `wtc feature-a`:
 
 ```sh
 wtc() {
@@ -109,12 +108,6 @@ wtc() {
 }
 ```
 
-Then run:
-
-```sh
-wtc feature-a
-```
-
 ## Defaults
 
 - Worktrees go in `~/.worktrees/<repo-name>/<branch>`, also when you run `wt`
@@ -122,18 +115,11 @@ wtc feature-a
 - If `<remote>/<name>` exists, `wt <name>` checks it out and tracks it, so you
   can open a teammate's branch. Otherwise the new branch has no upstream.
 - If the fetch fails (for example, offline), `wt` warns and uses local refs.
-- Base ref order for new branches:
-  1. `wt.base`
-  2. `WT_BASE`
-  3. remote default branch
-  4. `origin/this`
-  5. `origin/main`
-  6. `origin/master`
-  7. `HEAD`
-- Remote is `wt.remote`, default `origin`.
-- Setup runs `wt.hook` if set.
-- Without `wt.hook`, setup runs the detected lockfile package manager.
-- Untracked `.env` and `.env.*` files are copied into new worktrees.
+- Base ref order for new branches: `wt.base`, `WT_BASE`, the remote default
+  branch, `origin/this`, `origin/main`, `origin/master`, then `HEAD`.
+- The remote is `wt.remote`, default `origin`.
+- Setup runs `wt.hook` if set. Otherwise it runs the install for the detected
+  lockfile.
 
 ## Config
 
@@ -147,7 +133,7 @@ git config wt.hook 'yarn install'
 git config wt.copyEnv false
 ```
 
-Use one-off environment overrides:
+One-off environment overrides:
 
 ```sh
 WT_ROOT=~/Desktop/worktree/my-repo WT_BASE=origin/this wt feature-a
@@ -155,26 +141,10 @@ WT_SKIP_HOOK=1 wt feature-a
 WT_COPY_ENV=false wt feature-a
 ```
 
-## How it is packaged
+## Use with AI agents
 
-npm exposes the terminal command through the `package.json` `bin` field.
-The executable starts with `#!/usr/bin/env node`, as npm expects.
-
-Docs:
-
-- npm `bin` field:
-  <https://docs.npmjs.com/cli/v11/configuring-npm/package-json#bin>
-- npm Git install syntax:
-  <https://docs.npmjs.com/cli/v11/commands/npm-install>
-- Git worktree behavior:
-  <https://git-scm.com/docs/git-worktree>
-
-## Agent and AI use
-
-Agents should prefer deterministic commands. Avoid `--shell`; use the printed
+Agents should use deterministic commands. Avoid `--shell`; use the printed
 path instead.
-
-Good agent defaults:
 
 ```sh
 wt --json --no-install feature-a
@@ -184,43 +154,62 @@ wt --json --no-install --no-env --cwd /path/to/repo feature-a
 `--json` prints one object on stdout, for example
 `{ "path": "...", "branch": "feature-a", "base": "origin/main", "envCopied": 3 }`.
 
-## Suggested improvements
+### Agent skill
 
-These are not needed for the first team install.
+[`skills/wt/SKILL.md`](skills/wt/SKILL.md) teaches coding agents these rules.
+It follows the [Agent Skills specification](https://agentskills.io/specification).
+The skill only gives instructions, so install the `wt` command too.
 
-1. Add release tags, then install with
-   `npm install -g git+ssh://git@github.com/gitsoufiane/wt.git#v0.1.0`.
-   This gives the team a stable version instead of the latest `main` commit.
-2. Add `--base` and `--root` flags. Today these exist as Git config or
+| Agent                              | Install the skill                             |
+| ---------------------------------- | --------------------------------------------- |
+| Claude Code, Codex, Cursor, others | `npx skills add gitsoufiane/wt --skill wt -g` |
+| Pi                                 | `pi install npm:@gitsoufiane/wt`              |
+
+The first command uses the [skills CLI](https://github.com/vercel-labs/skills).
+The second installs this repo as a [Pi package](https://pi.dev/packages).
+
+## Roadmap
+
+1. Add `--base` and `--root` flags. Today these exist as Git config or
    environment values only.
-3. Add `wt repair` for moved worktrees. Git has `git worktree repair` for this.
-4. Publish to a private npm registry if you want normal semantic versions and
-   easier updates than Git URL installs.
+2. Add `wt repair` for moved worktrees. Git has `git worktree repair` for this.
+3. Remove locked worktrees. `git worktree remove` needs `--force` twice for
+   them, and `wt --force` passes it once.
 
 ## Development
 
-Install dev tools:
-
 ```sh
-npm install
-```
-
-Run checks:
-
-```sh
+npm install          # dev tools
+npm link             # use this checkout as the global wt
 npm run format:check
 npm run lint
 npm test
+npm pack --dry-run   # preview the published files
 ```
 
-Format files:
+## Release
+
+`.github/workflows/publish.yml` publishes to npm when you push a `v*` tag. It
+uses [trusted publishing](https://docs.npmjs.com/trusted-publishers/), so no
+npm token is stored in GitHub, and npm adds provenance for this public repo.
+
+One-time setup:
+
+1. Publish the first version by hand. The trusted publisher is set on the
+   package settings page, so the package must exist: `npm login`, then
+   `npm publish`. `publishConfig.access` makes the scoped package public.
+2. On npmjs.com, open the package, then **Settings** -> **Trusted Publisher**.
+   Pick GitHub Actions, user `gitsoufiane`, repo `wt`, workflow `publish.yml`.
+3. Push the next tag within 2 days. npm expires a trusted publisher that has
+   not published within 2 days of its creation.
+
+Each release:
 
 ```sh
-npm run format
+npm version patch   # or minor / major; commits and tags vX.Y.Z
+git push --follow-tags
 ```
 
-Preview the install package:
+## License
 
-```sh
-npm pack --dry-run
-```
+[MIT](LICENSE)
