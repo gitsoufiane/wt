@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const { spawnSync } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -14,10 +14,31 @@ const flags = {
 	force: false,
 };
 const args = [];
-// Child output goes to stderr so stdout carries only wt's result (path or JSON).
-const CHILD_STDIO = ["inherit", 2, "inherit"];
+const VERSION = require("../package.json").version;
+const startedAt = Date.now();
 
-try {
+const tty = Boolean(process.stderr.isTTY) && process.env.TERM !== "dumb";
+const useColor = tty && !("NO_COLOR" in process.env);
+// Spinners redraw one line, so they need a real terminal; CI logs get plain lines.
+const animate = tty && !process.env.CI;
+const paint = (code) => (text) =>
+	useColor ? `\x1b[${code}m${text}\x1b[0m` : String(text);
+const c = {
+	bold: paint(1),
+	dim: paint(2),
+	red: paint(31),
+	green: paint(32),
+	yellow: paint(33),
+	magenta: paint(35),
+	cyan: paint(36),
+};
+const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+let cursorHidden = false;
+process.on("exit", () => {
+	if (cursorHidden) process.stderr.write("\x1b[?25h");
+});
+
+(async () => {
 	for (let i = 0; i < rawArgs.length; i++) {
 		const arg = rawArgs[i];
 		if (arg === "--shell") flags.shell = true;
@@ -31,13 +52,13 @@ try {
 			process.chdir(dir);
 		} else args.push(arg);
 	}
-	main(args);
-} catch (error) {
-	console.error(`wt: ${error.message}`);
+	await main(args);
+})().catch((error) => {
+	console.error(`${c.red("✖ wt:")} ${error.message}`);
 	process.exit(1);
-}
+});
 
-function main(argv) {
+async function main(argv) {
 	const cmd = argv[0] || "";
 
 	if (cmd === "" || cmd === "-h" || cmd === "--help") {
@@ -46,7 +67,7 @@ function main(argv) {
 	}
 
 	if (cmd === "-v" || cmd === "--version") {
-		console.log(require("../package.json").version);
+		console.log(VERSION);
 		return;
 	}
 
@@ -73,7 +94,7 @@ function main(argv) {
 
 	if (argv.length !== 1)
 		throw new Error(`create takes exactly one name, got ${argv.length}`);
-	createWorktree(cmd);
+	return createWorktree(cmd);
 }
 
 function usage() {
@@ -97,7 +118,7 @@ function usage() {
   -v            print version`);
 }
 
-function createWorktree(name) {
+async function createWorktree(name) {
 	const repo = repoRoot();
 	validateBranchName(name, repo);
 
@@ -117,11 +138,20 @@ function createWorktree(name) {
 
 	if (fs.existsSync(wtPath)) throw new Error(`${wtPath} already exists`);
 
-	const base = resolveBaseRef(repo, name);
+	header(`creating worktree ${c.bold(c.magenta(name))}`);
+	detail("📦", "repo", mainRepoRoot(repo));
+	detail("📁", "target", wtPath);
+
+	const base = await resolveBaseRef(repo, name);
+	detail(
+		"🌱",
+		"base",
+		`${c.cyan(base.ref)}${base.track ? c.dim(" (tracking remote branch)") : ""}`,
+	);
 	fs.mkdirSync(path.dirname(wtPath), { recursive: true });
 
-	log(`creating '${name}' from ${base.ref}`);
-	const add = run(
+	const add = await step(
+		`🌿 Creating branch '${name}' from ${base.ref}`,
 		"git",
 		[
 			"-C",
@@ -137,7 +167,7 @@ function createWorktree(name) {
 		{ check: false },
 	);
 	if (!fs.existsSync(path.join(wtPath, ".git"))) {
-		throw new Error(`worktree creation failed at ${wtPath}${outputTail(add)}`);
+		throw new Error(`worktree creation failed at ${wtPath}`);
 	}
 	if (add.status !== 0)
 		warn(
@@ -147,30 +177,33 @@ function createWorktree(name) {
 	let envCopied = 0;
 	if (flags.env && copyEnvEnabled(repo)) {
 		envCopied = copyEnvFiles(repo, wtPath);
-		log(`copied ${envCopied} env file(s) -> ${wtPath}`);
+	} else {
+		log("🙈", "env copy skipped");
 	}
 
-	runSetup(repo, wtPath);
-	log(`created ${wtPath}`);
+	await runSetup(repo, wtPath);
+	done(`Worktree ${c.bold(name)} is ready`);
 	finishTarget(wtPath, { branch: name, base: base.ref, envCopied });
 }
 
 function listWorktrees() {
 	const repo = repoRoot();
+	header("worktrees");
 	run("git", ["-C", repo, "worktree", "list"], { stdio: "inherit" });
 }
 
 function pruneWorktrees() {
 	const repo = repoRoot();
-	log("previewing prunable worktree metadata");
+	header("pruning stale worktree metadata");
+	log("🔍", "previewing prunable worktree metadata");
 	run("git", ["-C", repo, "worktree", "prune", "--verbose", "--dry-run"], {
 		stdio: "inherit",
 	});
-	log("pruning");
+	log("🧹", "pruning");
 	run("git", ["-C", repo, "worktree", "prune", "--verbose"], {
 		stdio: "inherit",
 	});
-	log("done");
+	done("Prune finished");
 }
 
 function switchWorktree() {
@@ -200,7 +233,7 @@ function switchWorktree() {
 	finishTarget(target, {});
 }
 
-function deleteWorktree(deleteBranch, name) {
+async function deleteWorktree(deleteBranch, name) {
 	const source = repoRoot();
 	const main = mainRepoRoot(source);
 	if (name) validateBranchName(name, source);
@@ -212,8 +245,15 @@ function deleteWorktree(deleteBranch, name) {
 			throw new Error(`no worktree has branch '${name}' checked out`);
 		if (!gitOk(["show-ref", "--verify", "--quiet", `refs/heads/${name}`], main))
 			throw new Error(`branch '${name}' does not exist`);
-		run("git", ["-C", main, "branch", "-D", name], { stdio: CHILD_STDIO });
-		log(`deleted branch '${name}'`);
+		header(`deleting branch ${c.bold(c.magenta(name))}`);
+		await step(`🔥 Deleting branch '${name}'`, "git", [
+			"-C",
+			main,
+			"branch",
+			"-D",
+			name,
+		]);
+		done(`Branch ${c.bold(name)} deleted`);
 		if (flags.json) console.log(JSON.stringify({ path: main, branch: name }));
 		else console.log(`cd ${shellQuote(main)}`);
 		return;
@@ -227,28 +267,38 @@ function deleteWorktree(deleteBranch, name) {
 		);
 
 	const branch = git(["rev-parse", "--abbrev-ref", "HEAD"], current);
+	header(`deleting worktree ${c.bold(c.magenta(branch))}`);
+	detail("📁", "path", current);
+	detail("📦", "repo", main);
+	if (dirty) warn("discarding uncommitted changes (--force)");
+
 	// cwd must be main: process.cwd() is deleted by the remove below
 	const removeArgs = ["-C", main, "worktree", "remove"];
 	if (flags.force) removeArgs.push("--force");
-	run("git", [...removeArgs, current], {
-		cwd: main,
-		stdio: CHILD_STDIO,
-	});
-	log(`removed ${current}`);
+	await step(
+		`🧹 Removing worktree ${current}`,
+		"git",
+		[...removeArgs, current],
+		{
+			cwd: main,
+		},
+	);
 
 	if (deleteBranch) {
 		if (branch === "HEAD") {
 			warn("detached HEAD; no branch to delete");
 		} else {
-			run("git", ["-C", main, "branch", "-D", branch], {
-				cwd: main,
-				stdio: CHILD_STDIO,
-			});
-			log(`deleted branch '${branch}'`);
+			await step(
+				`🔥 Deleting branch '${branch}'`,
+				"git",
+				["-C", main, "branch", "-D", branch],
+				{ cwd: main },
+			);
 		}
 	} else {
-		log(`branch '${branch}' kept`);
+		log("🔒", `branch '${branch}' kept`);
 	}
+	done("Worktree deleted");
 
 	if (flags.json) console.log(JSON.stringify({ path: main, branch }));
 	else console.log(`cd ${shellQuote(main)}`);
@@ -259,11 +309,14 @@ function syncEnv() {
 	const main = mainRepoRoot(current);
 	if (samePath(current, main))
 		throw new Error("run sync-env inside a linked worktree, not the main repo");
+	header("syncing env files");
+	detail("📦", "from", main);
+	detail("📁", "to", current);
 	const count = copyEnvFiles(main, current);
-	log(`synced ${count} env file(s) into ${current}`);
+	done(`Synced ${count} env file(s)`);
 }
 
-function resolveBaseRef(repo, name) {
+async function resolveBaseRef(repo, name) {
 	const configured = config(repo, "wt.base", "WT_BASE", "");
 	const remote = config(repo, "wt.remote", "WT_REMOTE", "origin");
 	const hasRemote = gitOk(["remote", "get-url", remote], repo);
@@ -274,11 +327,12 @@ function resolveBaseRef(repo, name) {
 		);
 
 	if (hasRemote) {
-		log(`fetching latest ${remote}`);
-		const fetch = run("git", ["-C", repo, "fetch", remote, "--prune"], {
-			stdio: CHILD_STDIO,
-			check: false,
-		});
+		const fetch = await step(
+			`🛰️  Fetching latest ${remote}`,
+			"git",
+			["-C", repo, "fetch", remote, "--prune"],
+			{ check: false },
+		);
 		if (fetch.status !== 0)
 			warn(`fetch from ${remote} failed; using local refs, which may be stale`);
 	}
@@ -304,28 +358,32 @@ function resolveBaseRef(repo, name) {
 	return { ref: "HEAD", track: false };
 }
 
-function runSetup(repo, wtPath) {
+async function runSetup(repo, wtPath) {
 	if (!flags.install || process.env.WT_SKIP_HOOK === "1") {
-		log("setup skipped");
+		log("⏭️ ", "setup skipped");
 		return;
 	}
 
 	const hook = config(repo, "wt.hook", "WT_HOOK", "");
 	if (hook) {
-		log(`running hook: ${hook}`);
-		runShell(hook, wtPath);
+		await step(`🪝 Running hook: ${hook}`, hook, [], {
+			cwd: wtPath,
+			shell: true,
+		});
 		return;
 	}
 
 	const install = detectInstall(wtPath);
 	if (!install) {
-		log("no hook or installable manifest; skipping setup");
+		log("⏭️ ", "no hook or installable manifest; skipping setup");
 		return;
 	}
 
-	log(`running ${install}`);
 	// Via the shell so Windows can run npm.cmd etc. (Node blocks direct .cmd spawns).
-	runShell(install, wtPath);
+	await step(`📦 Installing dependencies (${install})`, install, [], {
+		cwd: wtPath,
+		shell: true,
+	});
 }
 
 function detectInstall(dir) {
@@ -371,9 +429,11 @@ function copyEnvFiles(sourceRepo, targetRepo) {
 		if (fs.existsSync(target) && fs.lstatSync(target).isSymbolicLink())
 			fs.unlinkSync(target);
 		fs.copyFileSync(source, target);
+		log("🔐", `copied ${c.cyan(rel)}`);
 		count += 1;
 	}
 
+	if (count === 0) log("🔐", "no env files to copy");
 	return count;
 }
 
@@ -491,15 +551,105 @@ function run(cmd, cmdArgs = [], options = {}) {
 	return result;
 }
 
-function runShell(command, cwd) {
-	const result = spawnSync(command, {
-		cwd,
-		shell: true,
-		stdio: CHILD_STDIO,
+// Runs a child with a spinner. On a terminal the output is captured and its
+// last line is shown next to the spinner; elsewhere it streams to stderr.
+// Child output never reaches stdout, which carries only wt's result.
+function step(label, cmd, cmdArgs = [], options = {}) {
+	const started = Date.now();
+	const stdio = ["inherit", "pipe", "pipe"];
+	const cwd = options.cwd || process.cwd();
+	const child = options.shell
+		? spawn(cmd, { cwd, shell: true, stdio })
+		: spawn(cmd, cmdArgs, { cwd, stdio });
+	const command = options.shell ? cmd : [cmd, ...cmdArgs].join(" ");
+	let output = "";
+	let last = "";
+	const spinner = startSpinner(label, started, () => last);
+
+	const collect = (chunk) => {
+		const text = chunk.toString();
+		output += text;
+		if (!animate) process.stderr.write(text);
+		const lines = stripAnsi(text)
+			.split(/[\r\n]+/)
+			.map((line) => line.trim())
+			.filter(Boolean);
+		if (lines.length) last = lines[lines.length - 1];
+	};
+	child.stdout.on("data", collect);
+	child.stderr.on("data", collect);
+
+	return new Promise((resolve, reject) => {
+		let settled = false;
+		child.on("error", (error) => {
+			if (settled) return;
+			settled = true;
+			spinner.stop("fail");
+			reject(new Error(`${cmd}: ${error.message}`));
+		});
+		child.on("close", (status) => {
+			if (settled) return;
+			settled = true;
+			const result = { status };
+			if (status === 0) {
+				spinner.stop("ok");
+				return resolve(result);
+			}
+			spinner.stop(options.check === false ? "warn" : "fail");
+			// Captured output was hidden behind the spinner; show it now.
+			if (animate && output.trim()) {
+				console.error(
+					c.dim(
+						output
+							.trim()
+							.split("\n")
+							.map((line) => `   │ ${line}`)
+							.join("\n"),
+					),
+				);
+			}
+			if (options.check === false) return resolve(result);
+			reject(new Error(`${command} failed with exit ${status}`));
+		});
 	});
-	if (result.error) throw new Error(`${command}: ${result.error.message}`);
-	if (result.status !== 0)
-		throw new Error(`${command} failed with exit ${result.status}`);
+}
+
+function startSpinner(label, started, lastLine) {
+	const finish = (state) => {
+		const icon = { ok: c.green("✔"), warn: c.yellow("⚠"), fail: c.red("✖") }[
+			state
+		];
+		console.error(`${icon} ${label} ${c.dim(`(${elapsed(started)})`)}`);
+	};
+	if (!animate) {
+		console.error(`${c.cyan("⏳")} ${label}...`);
+		return { stop: finish };
+	}
+
+	let frame = 0;
+	const render = () => {
+		const spin = c.cyan(FRAMES[frame++ % FRAMES.length]);
+		let text = `${spin} ${label} ${c.dim(elapsed(started))}`;
+		const room = (process.stderr.columns || 80) - stripAnsi(text).length - 6;
+		const extra = lastLine();
+		if (extra && room > 10)
+			text += c.dim(
+				`  ${extra.length > room ? `${extra.slice(0, room - 1)}…` : extra}`,
+			);
+		process.stderr.write(`\r\x1b[2K${text}`);
+	};
+	cursorHidden = true;
+	process.stderr.write("\x1b[?25l");
+	render();
+	const timer = setInterval(render, 80);
+	return {
+		stop(state) {
+			clearInterval(timer);
+			process.stderr.write("\r\x1b[2K\x1b[?25h");
+			cursorHidden = false;
+			finish(state);
+		},
+	};
 }
 
 function commandExists(command) {
@@ -519,7 +669,7 @@ function finishTarget(target, extra) {
 		return;
 	}
 
-	log(`opening shell in ${target}`);
+	log("🐚", `opening shell in ${target}`);
 	const shell =
 		process.env.SHELL || (process.platform === "win32" ? "cmd.exe" : "sh");
 	const result = spawnSync(shell, {
@@ -560,10 +710,39 @@ function outputTail(result) {
 	return text ? `\n${text}` : "";
 }
 
-function log(message) {
-	console.error(`wt: ${message}`);
+function header(title) {
+	console.error(
+		`\n🌳 ${c.bold(c.green("wt"))} ${c.dim(`v${VERSION}`)}  ${title}\n`,
+	);
+}
+
+function detail(icon, key, value) {
+	console.error(`   ${icon} ${c.dim(key.padEnd(7))} ${value}`);
+}
+
+function done(message) {
+	console.error(
+		`\n✨ ${c.bold(c.green(message))} ${c.dim(`in ${elapsed(startedAt)}`)}\n`,
+	);
+}
+
+function log(icon, message) {
+	console.error(`${icon} ${message}`);
 }
 
 function warn(message) {
-	console.error(`wt: ${message}`);
+	console.error(`${c.yellow("⚠️  wt:")} ${message}`);
+}
+
+function elapsed(since) {
+	const ms = Date.now() - since;
+	if (ms < 1000) return `${ms}ms`;
+	if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+	const seconds = Math.floor(ms / 1000);
+	return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
+}
+
+function stripAnsi(text) {
+	// eslint-disable-next-line no-control-regex
+	return text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
 }

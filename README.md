@@ -80,14 +80,29 @@ Flags:
 | `--no-env`     | Skip copying `.env` files                   |
 | `--force`      | Discard uncommitted changes when deleting   |
 
-Status messages (`wt: ...`) go to stderr. stdout carries only the result:
-the path and `cd` line, or the JSON object with `--json`.
+Status messages go to stderr, with emoji, colors, and a spinner for each
+long step (fetch, worktree add, install). In a terminal, the spinner shows the
+last output line of the step; in CI or a pipe, the output streams as plain
+lines. `NO_COLOR=1` turns colors off. stdout carries only the result: the path
+and `cd` line, or the JSON object with `--json`.
 
 ## Daily use
 
 ```console
 $ wt feature-a
-wt: created /Users/me/.worktrees/my-repo/feature-a
+
+🌳 wt v0.3.0  creating worktree feature-a
+
+   📦 repo    /Users/me/my-repo
+   📁 target  /Users/me/.worktrees/my-repo/feature-a
+✔ 🛰️  Fetching latest origin (0.8s)
+   🌱 base    origin/main
+✔ 🌿 Creating branch 'feature-a' from origin/main (61ms)
+🔐 copied .env
+✔ 📦 Installing dependencies (npm install) (4.2s)
+
+✨ Worktree feature-a is ready in 5.3s
+
 /Users/me/.worktrees/my-repo/feature-a
 cd '/Users/me/.worktrees/my-repo/feature-a'
 ```
