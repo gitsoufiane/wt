@@ -1,6 +1,6 @@
 {
 	"name": "@gitsoufiane/wt",
-	"version": "0.5.0",
+	"version": "0.5.1",
 	"description": "Git worktrees in one command: create, switch, list, and delete worktrees, with .env files copied and dependencies installed. Includes an agent skill for Pi, Claude Code, and Codex.",
 	"keywords": [
 		"git",
