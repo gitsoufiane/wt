@@ -52,11 +52,13 @@ Requirements: Node.js 18+, Git, and `fzf` only for `wt -s`.
 To install the latest code straight from GitHub, without npm releases:
 
 ```sh
-npm install -g github:gitsoufiane/wt        # main branch
-npm install -g github:gitsoufiane/wt#v0.4.0 # one tag
+npm install -g --allow-git=all github:gitsoufiane/wt        # main branch
+npm install -g --allow-git=all github:gitsoufiane/wt#v0.4.0 # one tag
 ```
 
-Both put `wt` on your `PATH`. Run `wt -v` to check.
+npm 12 blocks Git sources unless you pass `--allow-git=all`; older npm
+versions do not need it. Both commands put `wt` on your `PATH`. Run `wt -v`
+to check.
 
 > [!WARNING]
 > The npm name `wt-cli` belongs to a different package. If you installed an
