@@ -49,6 +49,15 @@ Requirements: Node.js 18+, Git, and `fzf` only for `wt -s`.
 | Update    | `npm install -g @gitsoufiane/wt@latest` |
 | Uninstall | `npm uninstall -g @gitsoufiane/wt`      |
 
+To install the latest code straight from GitHub, without npm releases:
+
+```sh
+npm install -g github:gitsoufiane/wt        # main branch
+npm install -g github:gitsoufiane/wt#v0.4.0 # one tag
+```
+
+Both put `wt` on your `PATH`. Run `wt -v` to check.
+
 > [!WARNING]
 > The npm name `wt-cli` belongs to a different package. If you installed an
 > older version of this tool as `wt-cli`, run `npm uninstall -g wt-cli` first,
@@ -62,23 +71,26 @@ Requirements: Node.js 18+, Git, and `fzf` only for `wt -s`.
 | `wt --shell <name>` | Create and open a subshell inside it       |
 | `wt -s`             | Pick a worktree with `fzf` and print path  |
 | `wt --shell -s`     | Pick a worktree and open a subshell        |
-| `wt -l`             | List worktrees                             |
+| `wt -l`             | List worktrees with branch and status      |
 | `wt -p`             | Prune stale worktree metadata              |
 | `wt -d [<name>]`    | Delete current/named worktree, keep branch |
 | `wt -D [<name>]`    | Delete current/named worktree and branch   |
 | `wt <name> -D`      | Delete named worktree (if any) and branch  |
 | `wt sync-env`       | Copy untracked `.env` files                |
+| `wt shell-init`     | Print the `wtc` helper that runs `cd`      |
 | `wt -v`             | Print version                              |
 
 Flags:
 
-| Flag           | Does                                        |
-| -------------- | ------------------------------------------- |
-| `--json`       | Print JSON instead of text on create/delete |
-| `--cwd <dir>`  | Run as if started in `<dir>`                |
-| `--no-install` | Skip the setup hook / package install       |
-| `--no-env`     | Skip copying `.env` files                   |
-| `--force`      | Discard uncommitted changes when deleting   |
+| Flag           | Does                                               |
+| -------------- | -------------------------------------------------- |
+| `--base <ref>` | Branch from `<ref>`; overrides config and tracking |
+| `--root <dir>` | Create the worktree in `<dir>/<name>`              |
+| `--json`       | Print JSON on create, delete, switch, and list     |
+| `--cwd <dir>`  | Run as if started in `<dir>`                       |
+| `--no-install` | Skip the setup hook / package install              |
+| `--no-env`     | Skip copying `.env` files                          |
+| `--force`      | Discard uncommitted changes when deleting          |
 
 Status messages go to stderr, with emoji, colors, and a spinner for each
 long step (fetch, worktree add, install). In a terminal, the spinner shows the
@@ -110,18 +122,17 @@ cd '/Users/me/.worktrees/my-repo/feature-a'
 A program cannot change the directory of the shell that started it. Pick one:
 
 - `wt --shell feature-a` opens a new shell inside the worktree.
-- Add this helper to your shell profile, then run `wtc feature-a`:
+- Add this line to `~/.bashrc` or `~/.zshrc`, then run `wtc feature-a`,
+  `wtc -s`, or `wtc -D`. The `wtc` helper runs `wt` and moves your shell to
+  the printed path:
 
 ```sh
-wtc() {
-  local output target
-  output="$(wt "$@")" || { printf '%s\n' "$output"; return 1; }
-  printf '%s\n' "$output"
-  target="$(printf '%s\n' "$output" \
-    | awk '/^cd / { sub(/^cd /, ""); line=$0 } END { print line }')"
-  [ -n "$target" ] && eval "cd $target"
-}
+eval "$(wt shell-init)"
 ```
+
+`wt -l` marks the current worktree with `➜` and shows clean, changed, or
+missing folders. `wt -l --json` prints an array with `path`, `branch`,
+`name`, `main`, `current`, `dirty`, and `missing`.
 
 ## Defaults
 
@@ -130,7 +141,8 @@ wtc() {
 - If `<remote>/<name>` exists, `wt <name>` checks it out and tracks it, so you
   can open a teammate's branch. Otherwise the new branch has no upstream.
 - If the fetch fails (for example, offline), `wt` warns and uses local refs.
-- Base ref order for new branches: `wt.base`, `WT_BASE`, the remote default
+- `--base <ref>` wins over everything. Without it, the base ref order for new
+  branches is: `<remote>/<name>` (tracked), `WT_BASE`, `wt.base`, the remote default
   branch, `origin/this`, `origin/main`, `origin/master`, then `HEAD`.
 - The remote is `wt.remote`, default `origin`.
 - Setup runs `wt.hook` if set. Otherwise it runs the install for the detected
@@ -179,15 +191,15 @@ The skill only gives instructions, so install the `wt` command too.
 | ---------------------------------- | --------------------------------------------- |
 | Claude Code, Codex, Cursor, others | `npx skills add gitsoufiane/wt --skill wt -g` |
 | Pi                                 | `pi install npm:@gitsoufiane/wt`              |
+| Pi, from GitHub                    | `pi install git:github.com/gitsoufiane/wt`    |
 
 The first command uses the [skills CLI](https://github.com/vercel-labs/skills).
 The second installs this repo as a [Pi package](https://pi.dev/packages).
 
 ## Roadmap
 
-1. Add `--base` and `--root` flags. Today these exist as Git config or
-   environment values only.
-2. Add `wt repair` for moved worktrees. Git has `git worktree repair` for this.
+1. Add `wt repair` for moved worktrees. Git has `git worktree repair` for this.
+2. Add shell completions for bash, zsh, and fish.
 3. Remove locked worktrees. `git worktree remove` needs `--force` twice for
    them, and `wt --force` passes it once.
 

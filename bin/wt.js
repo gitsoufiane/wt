@@ -12,7 +12,10 @@ const flags = {
 	install: true,
 	env: true,
 	force: false,
+	base: "",
+	root: "",
 };
+const VALUE_FLAGS = { "--cwd": "cwd", "--base": "base", "--root": "root" };
 const args = [];
 const VERSION = require("../package.json").version;
 const startedAt = Date.now();
@@ -32,6 +35,16 @@ const c = {
 	magenta: paint(35),
 	cyan: paint(36),
 };
+const SHELL_INIT = `wtc() {
+  local output target
+  output="$(command wt "$@")" || { [ -n "$output" ] && printf '%s\\n' "$output"; return 1; }
+  printf '%s\\n' "$output"
+  target="$(printf '%s\\n' "$output" \\
+    | awk '/^cd / { sub(/^cd /, ""); line=$0 } END { print line }')"
+  [ -n "$target" ] && eval "cd $target"
+}`;
+
+const plainColors = Object.fromEntries(Object.keys(c).map((k) => [k, String]));
 const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 let cursorHidden = false;
 process.on("exit", () => {
@@ -39,18 +52,29 @@ process.on("exit", () => {
 });
 
 (async () => {
+	let cwd = "";
 	for (let i = 0; i < rawArgs.length; i++) {
-		const arg = rawArgs[i];
-		if (arg === "--shell") flags.shell = true;
+		const raw = rawArgs[i];
+		const eq = raw.startsWith("--") ? raw.indexOf("=") : -1;
+		const arg = eq > 0 ? raw.slice(0, eq) : raw;
+		if (Object.hasOwn(VALUE_FLAGS, arg)) {
+			const value = eq > 0 ? raw.slice(eq + 1) : rawArgs[++i];
+			if (!value) throw new Error(`${arg} requires a value`);
+			if (arg === "--cwd") cwd = value;
+			else if (arg === "--root") flags.root = path.resolve(expandHome(value));
+			else flags[VALUE_FLAGS[arg]] = value;
+		} else if (eq > 0) args.push(raw);
+		else if (arg === "--shell") flags.shell = true;
 		else if (arg === "--json") flags.json = true;
 		else if (arg === "--no-install") flags.install = false;
 		else if (arg === "--no-env") flags.env = false;
 		else if (arg === "--force") flags.force = true;
-		else if (arg === "--cwd") {
-			const dir = rawArgs[++i];
-			if (!dir) throw new Error("--cwd requires a directory");
-			process.chdir(dir);
-		} else args.push(arg);
+		else args.push(arg);
+	}
+	if (cwd) {
+		if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory())
+			throw new Error(`--cwd: no such directory: ${cwd}`);
+		process.chdir(cwd);
 	}
 	await main(args);
 })().catch((error) => {
@@ -75,6 +99,7 @@ async function main(argv) {
 	if (cmd === "-p" || cmd === "--prune") return pruneWorktrees();
 	if (cmd === "-s" || cmd === "--switch") return switchWorktree();
 	if (cmd === "sync-env") return syncEnv();
+	if (cmd === "shell-init") return console.log(SHELL_INIT);
 
 	const deleteFlags = { "-d": false, "--delete": false, "-D": true };
 	if (Object.hasOwn(deleteFlags, cmd)) {
@@ -87,10 +112,8 @@ async function main(argv) {
 	if (argv.length === 2 && Object.hasOwn(deleteFlags, argv[1]))
 		return deleteWorktree(deleteFlags[argv[1]], cmd);
 
-	if (cmd.startsWith("-")) {
-		usage();
-		throw new Error(`unknown option '${cmd}'`);
-	}
+	if (cmd.startsWith("-"))
+		throw new Error(`unknown option '${cmd}'; run 'wt --help' for usage`);
 
 	if (argv.length !== 1)
 		throw new Error(`create takes exactly one name, got ${argv.length}`);
@@ -98,23 +121,28 @@ async function main(argv) {
 }
 
 function usage() {
-	console.log(`usage: wt [options] <name> | wt [-d|-D] [<name>] | wt -s | wt -l | wt -p | wt sync-env
+	console.log(`usage: wt [options] <name> | wt [-d|-D] [<name>] | wt -s | wt -l | wt -p
+       wt sync-env | wt shell-init
 
   <name>        create worktree; tracks <remote>/<name> if it exists,
                 else branches from the configured base ref
+  --base <ref>  branch from <ref> (overrides wt.base and remote tracking)
+  --root <dir>  put the worktree in <dir>/<name> (overrides wt.root)
   --shell       open a subshell in the target after create or switch
-  --json        print machine-readable JSON instead of text output
+  --json        print machine-readable JSON (create, delete, switch, list)
   --cwd <dir>   run as if started in <dir>
   --no-install  skip the setup hook / package install
   --no-env      skip copying .env files
   --force       discard uncommitted changes when deleting a worktree
   -s            switch: fzf-pick an existing worktree and print its path
-  -l            list worktrees
+  -l            list worktrees with branch and status
   -p            prune stale worktree metadata
   -d [<name>]   delete current (or named) worktree, keep branch
   -D [<name>]   delete current (or named) worktree and its branch
   <name> -D     same as -D <name>; also deletes a branch with no worktree
   sync-env      copy untracked .env files from main repo to current worktree
+  shell-init    print a wtc() shell function that cds into the result;
+                add eval "$(wt shell-init)" to ~/.bashrc or ~/.zshrc
   -v            print version`);
 }
 
@@ -143,6 +171,10 @@ async function createWorktree(name) {
 	detail("📁", "target", wtPath);
 
 	const base = await resolveBaseRef(repo, name);
+	if (
+		!gitOk(["rev-parse", "--verify", "--quiet", `${base.ref}^{commit}`], repo)
+	)
+		throw new Error(`base ref '${base.ref}' does not exist`);
 	detail(
 		"🌱",
 		"base",
@@ -188,8 +220,46 @@ async function createWorktree(name) {
 
 function listWorktrees() {
 	const repo = repoRoot();
-	header("worktrees");
-	run("git", ["-C", repo, "worktree", "list"], { stdio: "inherit" });
+	const entries = parseWorktrees(
+		git(["worktree", "list", "--porcelain"], repo),
+	).map((entry, index) => {
+		const missing = !entry.bare && !fs.existsSync(entry.worktree);
+		const status =
+			entry.bare || missing
+				? null
+				: gitMaybe(["status", "--porcelain"], entry.worktree);
+		return {
+			path: entry.worktree,
+			branch: entry.branch || null,
+			name: entryName(entry),
+			main: index === 0,
+			current: samePath(entry.worktree, repo),
+			dirty: status && status.ok ? status.stdout.trim() !== "" : null,
+			missing,
+		};
+	});
+
+	if (flags.json) {
+		console.log(JSON.stringify(entries));
+		return;
+	}
+
+	// The list is the result, so it goes to stdout; color it only for a terminal.
+	const o = process.stdout.isTTY && useColor ? c : plainColors;
+	const width = Math.max(...entries.map((e) => e.name.length));
+	const pathWidth = Math.max(...entries.map((e) => e.path.length));
+
+	for (const entry of entries) {
+		const mark = entry.current ? o.green("➜") : " ";
+		let state;
+		if (entry.missing) state = o.yellow("⚠ missing, run wt -p");
+		else if (entry.dirty) state = o.yellow("✎ changed");
+		else if (entry.dirty === false) state = o.green("✓ clean");
+		else state = o.dim("bare");
+		console.log(
+			`${mark} ${o.bold(entry.name.padEnd(width))}  ${o.dim(entry.path.padEnd(pathWidth))}  ${state}${entry.main ? o.dim("  (main)") : ""}`,
+		);
+	}
 }
 
 function pruneWorktrees() {
@@ -210,21 +280,28 @@ function switchWorktree() {
 	const repo = repoRoot();
 	const entries = parseWorktrees(
 		git(["worktree", "list", "--porcelain"], repo),
-	);
+	).filter((entry) => !entry.bare && fs.existsSync(entry.worktree));
 	if (entries.length === 0) throw new Error("no worktrees found");
 
 	let target;
 	if (commandExists("fzf")) {
 		const input = entries
-			.map((entry) => `${entry.worktree}\t${entry.branch || ""}`)
+			.map((entry) => `${entryName(entry)}\t${entry.worktree}`)
 			.join("\n");
-		const pick = spawnSync("fzf", ["--prompt=worktree> "], {
-			input,
-			encoding: "utf8",
-		});
+		const pick = spawnSync(
+			"fzf",
+			[
+				"--prompt=worktree> ",
+				"--delimiter=\t",
+				"--height=40%",
+				"--reverse",
+				"--preview=git -C {2} log --oneline --decorate -n 15",
+			],
+			{ input, encoding: "utf8", stdio: ["pipe", "pipe", "inherit"] },
+		);
 		if (pick.error) throw new Error(`fzf: ${pick.error.message}`);
 		if (pick.status !== 0 || !pick.stdout.trim()) return;
-		target = pick.stdout.trimEnd().split("\t")[0];
+		target = pick.stdout.trimEnd().split("\t")[1];
 	} else {
 		for (const entry of entries) console.log(entry.worktree);
 		throw new Error("fzf is not installed; copy one of the paths above");
@@ -246,17 +323,22 @@ async function deleteWorktree(deleteBranch, name) {
 		if (!gitOk(["show-ref", "--verify", "--quiet", `refs/heads/${name}`], main))
 			throw new Error(`branch '${name}' does not exist`);
 		header(`deleting branch ${c.bold(c.magenta(name))}`);
-		await step(`🔥 Deleting branch '${name}'`, "git", [
+		return finishDelete(true, name, main, `Branch ${c.bold(name)} deleted`);
+	}
+	if (existing && samePath(existing.worktree, main))
+		throw new Error(
+			`branch '${name}' is checked out in the main worktree at ${main}; wt does not delete it`,
+		);
+	if (existing && !fs.existsSync(current)) {
+		header(`deleting worktree ${c.bold(c.magenta(name))}`);
+		warn(`${current} is missing; pruning its worktree metadata`);
+		await step("🧹 Pruning worktree metadata", "git", [
 			"-C",
 			main,
-			"branch",
-			"-D",
-			name,
+			"worktree",
+			"prune",
 		]);
-		done(`Branch ${c.bold(name)} deleted`);
-		if (flags.json) console.log(JSON.stringify({ path: main, branch: name }));
-		else console.log(`cd ${shellQuote(main)}`);
-		return;
+		return finishDelete(deleteBranch, name, main, "Worktree deleted");
 	}
 	if (isMainWorktree(current)) throw new Error("not inside a linked worktree");
 
@@ -284,6 +366,10 @@ async function deleteWorktree(deleteBranch, name) {
 		},
 	);
 
+	return finishDelete(deleteBranch, branch, main, "Worktree deleted");
+}
+
+async function finishDelete(deleteBranch, branch, main, message) {
 	if (deleteBranch) {
 		if (branch === "HEAD") {
 			warn("detached HEAD; no branch to delete");
@@ -298,7 +384,7 @@ async function deleteWorktree(deleteBranch, name) {
 	} else {
 		log("🔒", `branch '${branch}' kept`);
 	}
-	done("Worktree deleted");
+	done(message);
 
 	if (flags.json) console.log(JSON.stringify({ path: main, branch }));
 	else console.log(`cd ${shellQuote(main)}`);
@@ -337,6 +423,7 @@ async function resolveBaseRef(repo, name) {
 			warn(`fetch from ${remote} failed; using local refs, which may be stale`);
 	}
 
+	if (flags.base) return { ref: flags.base, track: false };
 	// Same-named remote branch: check it out instead of creating a diverging one.
 	if (hasRemote && remoteRefExists(name))
 		return { ref: `${remote}/${name}`, track: true };
@@ -465,7 +552,7 @@ function absoluteGitDir(cwd) {
 }
 
 function worktreeRoot(repo) {
-	const configured = config(repo, "wt.root", "WT_ROOT", "");
+	const configured = flags.root || config(repo, "wt.root", "WT_ROOT", "");
 	const value =
 		configured ||
 		path.join(os.homedir(), ".worktrees", path.basename(mainRepoRoot(repo)));
@@ -512,10 +599,16 @@ function parseWorktrees(output) {
 		if (key === "worktree") entry = { worktree: value };
 		else if (entry && key === "branch")
 			entry.branch = value.replace("refs/heads/", "");
+		else if (entry && key === "HEAD") entry.head = value;
+		else if (entry && key === "bare") entry.bare = true;
 	}
 
 	if (entry) entries.push(entry);
 	return entries;
+}
+
+function entryName(entry) {
+	return entry.branch || `(${(entry.head || "").slice(0, 7)})`;
 }
 
 function git(args, cwd) {
@@ -638,12 +731,21 @@ function startSpinner(label, started, lastLine) {
 			);
 		process.stderr.write(`\r\x1b[2K${text}`);
 	};
+	// Ctrl-C skips the "exit" handler unless a listener exists, so the
+	// cursor would stay hidden. Listen only while the spinner runs.
+	const interrupt = () => {
+		process.stderr.write("\r\x1b[2K");
+		console.error(`${c.red("✖")} ${label} ${c.dim("(interrupted)")}`);
+		process.exit(130);
+	};
+	process.once("SIGINT", interrupt);
 	cursorHidden = true;
 	process.stderr.write("\x1b[?25l");
 	render();
 	const timer = setInterval(render, 80);
 	return {
 		stop(state) {
+			process.removeListener("SIGINT", interrupt);
 			clearInterval(timer);
 			process.stderr.write("\r\x1b[2K\x1b[?25h");
 			cursorHidden = false;

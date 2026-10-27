@@ -39,8 +39,11 @@ If the branch already exists locally, `wt` fails and prints where it is.
 ## List
 
 ```sh
-git worktree list --porcelain
+wt -l --json
+# [{"path":"...","branch":"main","main":true,"dirty":false,...}]
 ```
+
+Use `--base <ref>` to branch from a specific ref instead of the default.
 
 ## Delete
 

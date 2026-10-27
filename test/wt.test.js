@@ -298,3 +298,79 @@ test("tracks a same-named remote branch and survives a failed fetch", () => {
 		assert.match(offline.stderr, /fetch from origin failed/);
 	});
 });
+
+test("-D cleans up a worktree whose folder was deleted by hand", () => {
+	withRepo(({ repo, wtRoot, env }) => {
+		run("node", [bin, "feature-o"], { cwd: repo, env });
+		fs.rmSync(path.join(wtRoot, "feature-o"), { recursive: true });
+
+		const result = run("node", [bin, "-D", "feature-o"], { cwd: repo, env });
+		assert.equal(result.status, 0, result.stderr || result.stdout);
+		assert.equal(git(["branch", "--list", "feature-o"], repo), "");
+		assert.doesNotMatch(git(["worktree", "list"], repo), /feature-o/);
+	});
+});
+
+test("unknown options keep stdout empty", () => {
+	const result = run("node", [bin, "--json", "--bogus"]);
+	assert.equal(result.status, 1);
+	assert.equal(result.stdout, "");
+	assert.match(result.stderr, /unknown option '--bogus'/);
+});
+
+test("--cwd reports a missing directory clearly", () => {
+	const result = run("node", [bin, "--cwd", "/no/such/dir", "x"]);
+	assert.equal(result.status, 1);
+	assert.match(result.stderr, /--cwd: no such directory: \/no\/such\/dir/);
+});
+
+test("refuses to delete the branch of the main worktree", () => {
+	withRepo(({ repo, env }) => {
+		const branch = git(["rev-parse", "--abbrev-ref", "HEAD"], repo);
+		const result = run("node", [bin, "-D", branch], { cwd: repo, env });
+		assert.equal(result.status, 1);
+		assert.match(result.stderr, /main worktree/);
+	});
+});
+
+test("--base and --root flags override the defaults", () => {
+	withRepo(({ tmp, repo, env }) => {
+		const first = git(["rev-parse", "HEAD"], repo);
+		git(["commit", "-q", "--allow-empty", "-m", "second"], repo);
+		const root = path.join(tmp, "flag-root");
+
+		const result = run(
+			"node",
+			[bin, "--json", "--base=HEAD~1", "--root", root, "feature-p"],
+			{ cwd: repo, env },
+		);
+		assert.equal(result.status, 0, result.stderr || result.stdout);
+		const parsed = JSON.parse(result.stdout);
+		assert.equal(parsed.path, path.join(root, "feature-p"));
+		assert.equal(parsed.base, "HEAD~1");
+		assert.equal(git(["rev-parse", "HEAD"], parsed.path), first);
+	});
+});
+
+test("-l --json lists worktrees as JSON", () => {
+	withRepo(({ repo, wtRoot, env }) => {
+		run("node", [bin, "feature-q"], { cwd: repo, env });
+		fs.writeFileSync(path.join(wtRoot, "feature-q", "new.txt"), "x\n");
+
+		const result = run("node", [bin, "-l", "--json"], { cwd: repo, env });
+		assert.equal(result.status, 0, result.stderr || result.stdout);
+		const list = JSON.parse(result.stdout);
+		assert.equal(list.length, 2);
+		assert.equal(list[0].main, true);
+		const entry = list.find((item) => item.branch === "feature-q");
+		assert.equal(entry.path, fs.realpathSync(path.join(wtRoot, "feature-q")));
+		assert.equal(entry.dirty, true);
+		assert.equal(entry.main, false);
+	});
+});
+
+test("shell-init prints a cd helper function", () => {
+	const result = run("node", [bin, "shell-init"]);
+	assert.equal(result.status, 0, result.stderr);
+	assert.match(result.stdout, /^wtc\(\) \{/m);
+});
