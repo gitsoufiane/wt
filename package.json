@@ -1,6 +1,6 @@
 {
 	"name": "@gitsoufiane/wt",
-	"version": "0.4.0",
+	"version": "0.5.0",
 	"description": "Small Git worktree helper installable as the wt command.",
 	"keywords": [
 		"git",
