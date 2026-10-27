@@ -1,16 +1,31 @@
 {
 	"name": "@gitsoufiane/wt",
 	"version": "0.5.0",
-	"description": "Small Git worktree helper installable as the wt command.",
+	"description": "Git worktrees in one command: create, switch, list, and delete worktrees, with .env files copied and dependencies installed. Includes an agent skill for Pi, Claude Code, and Codex.",
 	"keywords": [
 		"git",
 		"worktree",
+		"git-worktree",
+		"cli",
+		"branch",
+		"dotenv",
+		"fzf",
+		"developer-tools",
+		"ai-agents",
+		"agent-skills",
+		"claude-code",
+		"codex",
 		"pi-package"
 	],
+	"homepage": "https://github.com/gitsoufiane/wt#readme",
+	"bugs": {
+		"url": "https://github.com/gitsoufiane/wt/issues"
+	},
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/gitsoufiane/wt.git"
 	},
+	"author": "Soufiane Chaoufi (https://github.com/gitsoufiane)",
 	"license": "MIT",
 	"bin": {
 		"wt": "bin/wt.js"
